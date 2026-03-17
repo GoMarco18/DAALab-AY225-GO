@@ -1,0 +1,1039 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Network Visualization — Shortest Path + Multi-Factor</title>
+
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#121220; --border:#3a3b55; --text:#e9e9f2; --muted:#b7b8cc;
+      --link: rgba(233,233,242,0.30);
+      --linkHi: rgba(255,0,255,0.95);
+      --nodeStroke: rgba(0,255,255,0.95);
+      --nodeHi: rgba(255,204,0,0.95);
+      --focus:2px solid rgba(0,255,255,0.55);
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; padding:18px;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: radial-gradient(1200px 600px at 10% 10%, #1c1b33 0%, var(--bg) 55%, #0f0f18 100%);
+      color:var(--text);
+    }
+    h2{margin:0 0 12px 0}
+
+    /* ============================
+       UPDATED: wider left panel
+       ============================ */
+    .layout{
+      display:grid;
+      gap:14px;
+      grid-template-columns:520px 1fr; /* was 380px 1fr */
+      align-items:start
+    }
+    @media (min-width: 1400px){
+      .layout{ grid-template-columns: 620px 1fr; }
+    }
+
+    .panel{
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:14px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    }
+    .panel h3{
+      margin:0 0 10px 0;
+      font-size:14px; color:var(--muted);
+      font-weight:600; letter-spacing:0.2px;
+      text-transform:uppercase;
+    }
+    .row{display:grid; gap:10px; margin-bottom:12px}
+    .grid2{display:grid; gap:10px; grid-template-columns:1fr 1fr}
+    .grid3{display:grid; gap:10px; grid-template-columns:1fr 1fr 1fr}
+    .miniRow{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+    label{font-size:12px; color:var(--muted); display:grid; gap:6px}
+    select, input[type="text"], input[type="number"], textarea, button{
+      width:100%;
+      padding:10px;
+      border-radius:10px;
+      border:1px solid rgba(255,255,255,0.10);
+      background: rgba(0,0,0,0.20);
+      color: var(--text);
+      outline:none;
+    }
+    textarea{resize:vertical; min-height:120px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;}
+    select:focus, input:focus, textarea:focus, button:focus{outline: var(--focus); outline-offset:2px}
+    button{
+      cursor:pointer;
+      font-weight:700;
+      background: rgba(0,255,255,0.12);
+      border-color: rgba(0,255,255,0.20);
+      transition: transform 120ms ease, background 120ms ease;
+    }
+    button:hover{transform: translateY(-1px); background: rgba(0,255,255,0.16);}
+    button.secondary{background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.10); font-weight:650;}
+    button.danger{background: rgba(255,0,255,0.12); border-color: rgba(255,0,255,0.20);}
+    .hint{font-size:12px; color:var(--muted); line-height:1.4; margin-top:-4px}
+    .smallNote{color: var(--muted); font-size: 12px; line-height: 1.35;}
+    .pill{
+      display:inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(0,0,0,0.25);
+      color: var(--muted);
+      font-size: 11px;
+      margin-left: 6px;
+    }
+
+    .canvasWrap{
+      background: rgba(255,255,255,0.02);
+      border:1px solid var(--border);
+      border-radius:14px;
+      overflow:hidden;
+      position:relative;
+    }
+    svg{width:100%; height:min(70vh, 760px); display:block;
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+    }
+    .link{stroke: var(--link); stroke-width:2px}
+    .link.highlight{stroke: var(--linkHi); stroke-width:4px}
+    .node circle{fill:url(#portalGradient); stroke: var(--nodeStroke); stroke-width:2px; filter: drop-shadow(0 0 10px rgba(0,255,255,0.35));}
+    .node circle.highlight{stroke: var(--nodeHi); filter: drop-shadow(0 0 16px rgba(255,204,0,0.45));}
+    .node text{font-size:12px; fill: rgba(255,204,0,0.95); paint-order: stroke; stroke: rgba(0,0,0,0.55); stroke-width:3px; transform: translateY(-26px); pointer-events:none;}
+    .edgeLabel{font-size:11px; fill: rgba(255,204,0,0.92); paint-order: stroke; stroke: rgba(0,0,0,0.55); stroke-width:3px; pointer-events:none;}
+    #tooltip{
+      position:absolute;
+      background: rgba(0,0,0,0.82);
+      border:1px solid rgba(255,255,255,0.10);
+      color:#fff;
+      padding:8px 10px;
+      border-radius:10px;
+      font-size:12px;
+      pointer-events:none;
+      display:none;
+      max-width:360px;
+      white-space: pre-line;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+      backdrop-filter: blur(4px);
+    }
+
+    /* ============================
+       UPDATED: bigger Output box
+       ============================ */
+    pre#output{
+      margin:0; padding:12px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,0.10);
+      background: rgba(0,0,0,0.25);
+      min-height: 140px; /* was 84px */
+      overflow:auto;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+
+    /* ============================
+       UPDATED: larger results table + scroll container
+       ============================ */
+    #calcTableWrap{
+      margin-top: 8px;
+      max-height: 55vh;     /* big and readable */
+      overflow: auto;       /* vertical + horizontal scroll if needed */
+      border-radius: 12px;
+    }
+
+    table.calcTable{
+      width:100%;
+      border-collapse: collapse;
+      font-size: 14px;      /* was 12px */
+      background: rgba(0,0,0,0.18);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 12px;
+      overflow: hidden;
+
+      min-width: 900px;     /* prevents squished columns; enables horizontal scroll */
+    }
+    .calcTable th, .calcTable td{
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      padding: 10px 10px;   /* was 8px 8px */
+      text-align: left;
+      vertical-align: top;
+      color: var(--text);
+    }
+    .calcTable th{
+      color: var(--muted);
+      font-weight: 700;
+      background: rgba(255,255,255,0.03);
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    .calcTable tfoot td{
+      font-weight: 800;
+      background: rgba(0,255,255,0.06);
+    }
+    .resultHeader{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      margin: 6px 0 10px 0;
+    }
+
+    @media (max-width:980px){ .layout{grid-template-columns:1fr} }
+  </style>
+</head>
+
+<body>
+  <h2>Network Visualization</h2>
+
+  <div class="layout">
+    <div class="panel">
+      <h3>Build Your Network (Manual)</h3>
+      <div class="row">
+        <div class="hint">
+          Add edges manually or paste many edges (one per line): <b>from,to,distance,time,fuel</b>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <label>From <input id="edgeFrom" type="text" placeholder="e.g. IMUS" /></label>
+        <label>To <input id="edgeTo" type="text" placeholder="e.g. BACOOR" /></label>
+      </div>
+
+      <div class="grid3">
+        <label>Distance <input id="edgeDistance" type="number" step="0.01" placeholder="10" /></label>
+        <label>Time <input id="edgeTime" type="number" step="0.01" placeholder="15" /></label>
+        <label>Fuel <input id="edgeFuel" type="number" step="0.01" placeholder="1.2" /></label>
+      </div>
+
+      <div class="miniRow">
+        <button id="btnAddEdge">Add Edge</button>
+        <button id="btnBuildGraph" class="secondary">Build / Refresh Graph</button>
+      </div>
+
+      <div class="row" style="margin-top:10px;">
+        <label>
+          Paste edges (one per line)
+          <textarea id="bulkEdges" placeholder="IMUS,BACOOR,10,15,1.2"></textarea>
+        </label>
+        <div class="miniRow">
+          <button id="btnImportBulk" class="secondary">Import Pasted Edges</button>
+          <button id="btnClearEdges" class="danger">Clear All</button>
+        </div>
+      </div>
+
+      <h3>Shortest Path (A → B)</h3>
+      <div class="grid2">
+        <label>Source <select id="source"></select></label>
+        <label>Target <select id="target"></select></label>
+      </div>
+
+      <div class="row">
+        <label>
+          Weight
+          <select id="weight">
+            <option value="distance">Distance</option>
+            <option value="time">Time</option>
+            <option value="fuel">Fuel</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="miniRow">
+        <button id="btnCompute">Compute Path</button>
+        <button id="btnReset" class="secondary">Reset View</button>
+      </div>
+
+      <!-- Multi-factor section (now searches best for each factor + combined) -->
+      <div class="row" style="margin-top:10px;">
+        <h3>Multi‑Factor Shortest Path</h3>
+        <div class="smallNote">
+          Combined score uses: <b>score = wD·norm(D) + wT·norm(T) + wF·norm(F)</b>
+          <span class="pill">lower is better</span>
+        </div>
+      </div>
+
+      <div class="grid3">
+        <label>Distance weight (wD)
+          <input id="wDistance" type="number" step="0.1" value="1" />
+        </label>
+        <label>Time weight (wT)
+          <input id="wTime" type="number" step="0.1" value="1" />
+        </label>
+        <label>Fuel weight (wF)
+          <input id="wFuel" type="number" step="0.1" value="1" />
+        </label>
+      </div>
+
+      <div class="miniRow" style="margin-top:10px;">
+        <button id="btnComputeAll">Compute Best Path (All Factors)</button>
+        <button id="btnClearTable" class="secondary">Clear Table</button>
+      </div>
+
+      <div class="row" style="margin-top:10px;">
+        <div class="resultHeader">
+          <div class="smallNote"><b>Show calculations for:</b></div>
+          <select id="allFactorsResultPick" style="max-width:260px;">
+            <option value="combined">Combined (wD,wT,wF)</option>
+            <option value="distance">Best by Distance</option>
+            <option value="time">Best by Time</option>
+            <option value="fuel">Best by Fuel</option>
+          </select>
+        </div>
+        <div id="calcTableWrap"></div>
+      </div>
+
+      <h3>View</h3>
+      <div class="miniRow">
+        <button id="btnStatic" class="secondary">Static Layout: OFF</button>
+        <button id="btnFit" class="secondary">Fit to Screen</button>
+      </div>
+
+      <div class="miniRow" style="margin-top:10px;">
+        <button id="btnShuffle" class="secondary">Random Layout</button>
+        <button id="btnReset2" class="secondary">Reset Highlights</button>
+      </div>
+
+      <div class="row" style="margin-top:12px;">
+        <h3>Output</h3>
+        <pre id="output">Add edges to begin.</pre>
+      </div>
+    </div>
+
+    <div class="canvasWrap">
+      <svg id="graph">
+        <defs>
+          <radialGradient id="portalGradient" cx="50%" cy="50%" r="60%">
+            <stop offset="0%" stop-color="#00ffff" stop-opacity="1"/>
+            <stop offset="100%" stop-color="#003366" stop-opacity="1"/>
+          </radialGradient>
+        </defs>
+        <g id="zoomLayer"></g>
+      </svg>
+      <div id="tooltip"></div>
+    </div>
+  </div>
+
+  <script>
+    // (UNCHANGED JS — your rendering already fills calcTableWrap; CSS changes above make it bigger)
+    // =============================
+    // Elements / D3 roots
+    // =============================
+    const els = {
+      edgeFrom: document.getElementById("edgeFrom"),
+      edgeTo: document.getElementById("edgeTo"),
+      edgeDistance: document.getElementById("edgeDistance"),
+      edgeTime: document.getElementById("edgeTime"),
+      edgeFuel: document.getElementById("edgeFuel"),
+      bulkEdges: document.getElementById("bulkEdges"),
+
+      btnAddEdge: document.getElementById("btnAddEdge"),
+      btnBuildGraph: document.getElementById("btnBuildGraph"),
+      btnImportBulk: document.getElementById("btnImportBulk"),
+      btnClearEdges: document.getElementById("btnClearEdges"),
+
+      source: document.getElementById("source"),
+      target: document.getElementById("target"),
+      weight: document.getElementById("weight"),
+
+      btnCompute: document.getElementById("btnCompute"),
+      btnReset: document.getElementById("btnReset"),
+
+      wDistance: document.getElementById("wDistance"),
+      wTime: document.getElementById("wTime"),
+      wFuel: document.getElementById("wFuel"),
+      btnComputeAll: document.getElementById("btnComputeAll"),
+      btnClearTable: document.getElementById("btnClearTable"),
+      allFactorsResultPick: document.getElementById("allFactorsResultPick"),
+      calcTableWrap: document.getElementById("calcTableWrap"),
+
+      btnStatic: document.getElementById("btnStatic"),
+      btnFit: document.getElementById("btnFit"),
+      btnShuffle: document.getElementById("btnShuffle"),
+      btnReset2: document.getElementById("btnReset2"),
+
+      output: document.getElementById("output"),
+      tooltip: document.getElementById("tooltip"),
+    };
+
+    const svg = d3.select("#graph");
+    const zoomLayer = svg.select("#zoomLayer");
+
+    // =============================
+    // State
+    // =============================
+    const state = {
+      edgeStore: [],
+      nodes: [],
+      links: [],
+      adjacency: new Map(),
+
+      simulation: null,
+      linkSel: null,
+      nodeSel: null,
+      edgeLabelSel: null,
+      zoom: null,
+
+      width: 800,
+      height: 600,
+      loaded: false,
+
+      staticLayout: false,
+
+      allFactorResults: {
+        combined: null,
+        distance: null,
+        time: null,
+        fuel: null
+      }
+    };
+
+    function setOutput(text) { els.output.textContent = text; }
+
+    function setLoadedUI(isLoaded) {
+      state.loaded = isLoaded;
+      const disabled = !isLoaded;
+      for (const el of [
+        els.btnCompute, els.btnReset, els.btnShuffle, els.btnFit, els.btnStatic, els.btnReset2,
+        els.source, els.target, els.weight,
+        els.wDistance, els.wTime, els.wFuel, els.btnComputeAll, els.btnClearTable,
+        els.allFactorsResultPick
+      ]) el.disabled = disabled;
+    }
+    setLoadedUI(false);
+
+    function updateSize() {
+      const rect = svg.node().getBoundingClientRect();
+      state.width = rect.width;
+      state.height = rect.height;
+      if (state.simulation) state.simulation.force("center", d3.forceCenter(state.width / 2, state.height / 2));
+    }
+
+    window.addEventListener("resize", () => {
+      updateSize();
+      if (state.loaded) fitToScreen();
+    });
+
+    // =============================
+    // Manual edge ingestion
+    // =============================
+    function addEdgeToStore(from, to, distance = 0, time = 0, fuel = 0) {
+      const s = String(from ?? "").trim();
+      const t = String(to ?? "").trim();
+      if (!s || !t) return false;
+
+      state.edgeStore.push({
+        source: s,
+        target: t,
+        distance: Number.isFinite(+distance) ? +distance : 0,
+        time: Number.isFinite(+time) ? +time : 0,
+        fuel: Number.isFinite(+fuel) ? +fuel : 0,
+      });
+      return true;
+    }
+
+    function importBulkEdges(text) {
+      const lines = String(text ?? "").split(/\r?\n/);
+      let added = 0, skipped = 0;
+
+      for (const line of lines) {
+        const raw = line.trim();
+        if (!raw) continue;
+
+        const parts = raw.includes(",") ? raw.split(",")
+          : raw.includes(";") ? raw.split(";")
+            : raw.includes("\t") ? raw.split("\t")
+              : raw.split(/\s+/);
+
+        const from = (parts[0] ?? "").trim();
+        const to = (parts[1] ?? "").trim();
+        const distance = +(parts[2] ?? 0);
+        const time = +(parts[3] ?? 0);
+        const fuel = +(parts[4] ?? 0);
+
+        if (addEdgeToStore(from, to, distance, time, fuel)) added++;
+        else skipped++;
+      }
+      return { added, skipped };
+    }
+
+    function buildGraphDataFromStore() {
+      const links = state.edgeStore.map(e => ({ ...e }));
+      const nodeIds = Array.from(new Set(links.flatMap(l => [l.source, l.target]))).sort();
+      const nodes = nodeIds.map(id => ({ id }));
+
+      const adjacency = new Map();
+      const addAdj = (u, v, w) => {
+        if (!adjacency.has(u)) adjacency.set(u, []);
+        adjacency.get(u).push({ to: v, ...w });
+      };
+
+      // undirected
+      for (const l of links) {
+        const w = { distance: l.distance, time: l.time, fuel: l.fuel };
+        addAdj(l.source, l.target, w);
+        addAdj(l.target, l.source, w);
+      }
+
+      return { nodes, links, adjacency };
+    }
+
+    // =============================
+    // Dijkstra single factor
+    // =============================
+    function shortestPath(source, target, weightKey) {
+      const dist = new Map();
+      const prev = new Map();
+      const pq = new Set(state.nodes.map(n => n.id));
+
+      for (const n of state.nodes) dist.set(n.id, Infinity);
+      dist.set(source, 0);
+
+      while (pq.size) {
+        let u = null;
+        for (const id of pq) if (u === null || dist.get(id) < dist.get(u)) u = id;
+        pq.delete(u);
+        if (u === target) break;
+
+        const nbrs = state.adjacency.get(u) || [];
+        for (const e of nbrs) {
+          const w = Number(e[weightKey]) || 0;
+          const alt = dist.get(u) + w;
+          if (alt < dist.get(e.to)) {
+            dist.set(e.to, alt);
+            prev.set(e.to, u);
+          }
+        }
+      }
+
+      const cost = dist.get(target);
+      if (!Number.isFinite(cost) || cost === Infinity) return { path: [], cost: Infinity };
+
+      const path = [];
+      let u = target;
+      while (u !== undefined) { path.unshift(u); u = prev.get(u); }
+      return { path, cost };
+    }
+
+    // =============================
+    // Multi-factor helpers + combined Dijkstra
+    // =============================
+    function computeEdgeStatsForNormalization() {
+      let minD = Infinity, maxD = -Infinity;
+      let minT = Infinity, maxT = -Infinity;
+      let minF = Infinity, maxF = -Infinity;
+
+      for (const l of state.links) {
+        minD = Math.min(minD, l.distance); maxD = Math.max(maxD, l.distance);
+        minT = Math.min(minT, l.time);     maxT = Math.max(maxT, l.time);
+        minF = Math.min(minF, l.fuel);     maxF = Math.max(maxF, l.fuel);
+      }
+
+      const rangeD = Math.max(1e-9, maxD - minD);
+      const rangeT = Math.max(1e-9, maxT - minT);
+      const rangeF = Math.max(1e-9, maxF - minF);
+
+      return { minD, maxD, rangeD, minT, maxT, rangeT, minF, maxF, rangeF };
+    }
+
+    function normalizedScoreEdge(edge, stats, weights) {
+      const nd = (edge.distance - stats.minD) / stats.rangeD;
+      const nt = (edge.time - stats.minT) / stats.rangeT;
+      const nf = (edge.fuel - stats.minF) / stats.rangeF;
+      const score = weights.wD * nd + weights.wT * nt + weights.wF * nf;
+      return { nd, nt, nf, score };
+    }
+
+    function shortestPathMultiFactor(source, target, weights) {
+      const stats = computeEdgeStatsForNormalization();
+
+      const dist = new Map();
+      const prev = new Map();
+      const prevEdge = new Map();
+      const pq = new Set(state.nodes.map(n => n.id));
+
+      for (const n of state.nodes) dist.set(n.id, Infinity);
+      dist.set(source, 0);
+
+      while (pq.size) {
+        let u = null;
+        for (const id of pq) if (u === null || dist.get(id) < dist.get(u)) u = id;
+        pq.delete(u);
+        if (u === target) break;
+
+        const nbrs = state.adjacency.get(u) || [];
+        for (const e of nbrs) {
+          const s = normalizedScoreEdge(e, stats, weights);
+          const alt = dist.get(u) + s.score;
+          if (alt < dist.get(e.to)) {
+            dist.set(e.to, alt);
+            prev.set(e.to, u);
+            prevEdge.set(e.to, { from: u, to: e.to, distance: e.distance, time: e.time, fuel: e.fuel, ...s });
+          }
+        }
+      }
+
+      const score = dist.get(target);
+      if (!Number.isFinite(score) || score === Infinity) return { key: "combined", path: [], edges: [], score: Infinity, stats, weights };
+
+      const path = [];
+      const edgesUsed = [];
+      let u = target;
+      while (u !== undefined) {
+        path.unshift(u);
+        const pe = prevEdge.get(u);
+        if (pe) edgesUsed.unshift(pe);
+        u = prev.get(u);
+      }
+
+      const totals = edgesUsed.reduce((acc, e) => {
+        acc.distance += e.distance;
+        acc.time += e.time;
+        acc.fuel += e.fuel;
+        acc.nd += e.nd;
+        acc.nt += e.nt;
+        acc.nf += e.nf;
+        acc.score += e.score;
+        return acc;
+      }, { distance:0, time:0, fuel:0, nd:0, nt:0, nf:0, score:0 });
+
+      return { key: "combined", path, edges: edgesUsed, score, stats, totals, weights };
+    }
+
+    function edgesForPath(path) {
+      const edges = [];
+      if (!path || path.length < 2) return edges;
+
+      for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i], b = path[i+1];
+        const nbrs = state.adjacency.get(a) || [];
+        let best = null;
+        for (const e of nbrs) {
+          if (e.to !== b) continue;
+          if (!best || (e.distance + e.time + e.fuel) < (best.distance + best.time + best.fuel)) best = e;
+        }
+        if (!best) return [];
+        edges.push({ from: a, to: b, distance: best.distance, time: best.time, fuel: best.fuel });
+      }
+      return edges;
+    }
+
+    function buildResultForSingleFactor(key, path, cost) {
+      const stats = computeEdgeStatsForNormalization();
+      const weights = { wD: 0, wT: 0, wF: 0 };
+      if (key === "distance") weights.wD = 1;
+      if (key === "time") weights.wT = 1;
+      if (key === "fuel") weights.wF = 1;
+
+      const rawEdges = edgesForPath(path);
+      if (!rawEdges.length) return { key, path: [], edges: [], score: Infinity, stats, totals: null, weights };
+
+      const edges = rawEdges.map(e => ({ ...e, ...normalizedScoreEdge(e, stats, weights) }));
+
+      const totals = edges.reduce((acc, e) => {
+        acc.distance += e.distance;
+        acc.time += e.time;
+        acc.fuel += e.fuel;
+        acc.nd += e.nd;
+        acc.nt += e.nt;
+        acc.nf += e.nf;
+        acc.score += e.score;
+        return acc;
+      }, { distance:0, time:0, fuel:0, nd:0, nt:0, nf:0, score:0 });
+
+      return { key, path, edges, score: cost, stats, totals, weights };
+    }
+
+    function renderCalculationTable(result) {
+      if (!result || !result.edges || !result.edges.length) {
+        els.calcTableWrap.innerHTML = "";
+        return;
+      }
+
+      const w = result.weights || { wD: 0, wT: 0, wF: 0 };
+      const fmt = (n) => (Number.isFinite(n) ? n.toFixed(4).replace(/\.?0+$/,"") : "");
+      const fmt2 = (n) => (Number.isFinite(n) ? n.toFixed(2).replace(/\.?0+$/,"") : "");
+
+      const rowsHtml = result.edges.map((e, idx) => `
+        <tr>
+          <td>${idx+1}</td>
+          <td>${e.from} → ${e.to}</td>
+          <td>${fmt2(e.distance)}</td>
+          <td>${fmt2(e.time)}</td>
+          <td>${fmt2(e.fuel)}</td>
+          <td>${fmt(e.nd)}</td>
+          <td>${fmt(e.nt)}</td>
+          <td>${fmt(e.nf)}</td>
+          <td>${fmt(e.score)}</td>
+        </tr>
+      `).join("");
+
+      const t = result.totals;
+
+      els.calcTableWrap.innerHTML = `
+        <table class="calcTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Edge</th>
+              <th>D</th>
+              <th>T</th>
+              <th>F</th>
+              <th>norm(D)</th>
+              <th>norm(T)</th>
+              <th>norm(F)</th>
+              <th>score = ${w.wD}·nD + ${w.wT}·nT + ${w.wF}·nF</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+          <tfoot>
+            <tr>
+              <td colspan="2">Totals</td>
+              <td>${fmt2(t.distance)}</td>
+              <td>${fmt2(t.time)}</td>
+              <td>${fmt2(t.fuel)}</td>
+              <td>${fmt(t.nd)}</td>
+              <td>${fmt(t.nt)}</td>
+              <td>${fmt(t.nf)}</td>
+              <td>${fmt(t.score)}</td>
+            </tr>
+          </tfoot>
+        </table>
+        <div class="smallNote" style="margin-top:8px;">
+          Normalization ranges (global edge min/max):
+          D ∈ [${result.stats.minD}, ${result.stats.maxD}],
+          T ∈ [${result.stats.minT}, ${result.stats.maxT}],
+          F ∈ [${result.stats.minF}, ${result.stats.maxF}]
+        </div>
+      `;
+    }
+
+    // =============================
+    // Highlighting + rendering graph
+    // =============================
+    function clearHighlights() {
+      zoomLayer.selectAll(".link").classed("highlight", false);
+      zoomLayer.selectAll(".node circle").classed("highlight", false);
+    }
+
+    function highlightPath(path) {
+      clearHighlights();
+      if (!path || path.length < 2) return;
+
+      zoomLayer.selectAll(".node circle")
+        .filter(d => path.includes(d.id))
+        .classed("highlight", true);
+
+      const segs = new Set();
+      for (let i = 0; i < path.length - 1; i++) {
+        segs.add(path[i] + "->" + path[i+1]);
+        segs.add(path[i+1] + "->" + path[i]);
+      }
+
+      zoomLayer.selectAll(".link")
+        .classed("highlight", d => segs.has(d.source.id + "->" + d.target.id));
+    }
+
+    function renderGraph() {
+      updateSize();
+      zoomLayer.selectAll("*").remove();
+
+      state.zoom = d3.zoom()
+        .scaleExtent([0.2, 5])
+        .on("zoom", (event) => zoomLayer.attr("transform", event.transform));
+      svg.call(state.zoom);
+
+      state.loaded = true;
+      setLoadedUI(true);
+
+      state.linkSel = zoomLayer.append("g")
+        .attr("class", "links")
+        .selectAll("line")
+        .data(state.links)
+        .enter()
+        .append("line")
+        .attr("class", "link");
+
+      state.edgeLabelSel = zoomLayer.append("g")
+        .attr("class", "edgeLabels")
+        .selectAll("text")
+        .data(state.links)
+        .enter()
+        .append("text")
+        .attr("class", "edgeLabel")
+        .text(d => `D:${d.distance} T:${d.time} F:${d.fuel}`);
+
+      state.nodeSel = zoomLayer.append("g")
+        .attr("class", "nodes")
+        .selectAll("g")
+        .data(state.nodes)
+        .enter()
+        .append("g")
+        .attr("class", "node")
+        .call(
+          d3.drag()
+            .on("start", (event, d) => {
+              if (!event.active && !state.staticLayout) state.simulation.alphaTarget(0.3).restart();
+              d.fx = d.x; d.fy = d.y;
+            })
+            .on("drag", (event, d) => { d.fx = event.x; d.fy = event.y; })
+            .on("end", (event, d) => {
+              if (!event.active && !state.staticLayout) state.simulation.alphaTarget(0);
+            })
+        );
+
+      state.nodeSel.append("circle").attr("r", 18);
+      state.nodeSel.append("text").text(d => d.id);
+
+      const tooltip = d3.select(els.tooltip);
+      state.nodeSel
+        .on("mouseover", (event, d) => {
+          const connected = state.adjacency.get(d.id) || [];
+          let info = `Node ${d.id}\nConnected:\n`;
+          for (const e of connected) info += `→ ${e.to} | D:${e.distance}, T:${e.time}, F:${e.fuel}\n`;
+          tooltip.style("display", "block").text(info);
+        })
+        .on("mousemove", (event) => {
+          const rect = svg.node().getBoundingClientRect();
+          tooltip.style("left", (event.clientX - rect.left + 12) + "px")
+                 .style("top", (event.clientY - rect.top + 12) + "px");
+        })
+        .on("mouseout", () => tooltip.style("display", "none"));
+
+      if (state.simulation) state.simulation.stop();
+
+      state.simulation = d3.forceSimulation(state.nodes)
+        .force("link", d3.forceLink(state.links).id(d => d.id).distance(170).strength(0.55))
+        .force("charge", d3.forceManyBody().strength(-450))
+        .force("collide", d3.forceCollide(32))
+        .force("center", d3.forceCenter(state.width / 2, state.height / 2))
+        .on("tick", () => {
+          state.linkSel
+            .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+            .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+
+          state.nodeSel.attr("transform", d => `translate(${d.x},${d.y})`);
+
+          state.edgeLabelSel
+            .attr("x", d => (d.source.x + d.target.x) / 2)
+            .attr("y", d => (d.source.y + d.target.y) / 2);
+        });
+
+      if (state.staticLayout) state.simulation.stop();
+      els.btnStatic.textContent = `Static Layout: ${state.staticLayout ? "ON" : "OFF"}`;
+
+      const ids = state.nodes.map(n => n.id);
+      els.source.innerHTML = "";
+      els.target.innerHTML = "";
+      for (const id of ids) {
+        els.source.appendChild(new Option(id, id));
+        els.target.appendChild(new Option(id, id));
+      }
+      if (ids.length) {
+        els.source.value = ids[0];
+        els.target.value = ids[ids.length - 1];
+      }
+
+      setOutput(`Graph built with ${state.nodes.length} nodes and ${state.links.length} edges.`);
+      fitToScreen();
+    }
+
+    function fitToScreen() {
+      if (!state.loaded || !state.zoom) return;
+      const bounds = zoomLayer.node().getBBox();
+      if (!bounds.width || !bounds.height) return;
+
+      const w = state.width, h = state.height;
+      const padding = 40;
+      const scale = Math.max(0.2, Math.min(5, Math.min((w - padding) / bounds.width, (h - padding) / bounds.height)));
+      const tx = (w / 2) - scale * (bounds.x + bounds.width / 2);
+      const ty = (h / 2) - scale * (bounds.y + bounds.height / 2);
+
+      svg.transition().duration(450).call(state.zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+    }
+
+    // =============================
+    // Actions
+    // =============================
+    function computePathSingle() {
+      if (!state.links.length) { setOutput('Build the graph first: click "Build / Refresh Graph".'); return; }
+      const source = els.source.value;
+      const target = els.target.value;
+      const weight = els.weight.value;
+
+      const res = shortestPath(source, target, weight);
+      if (!res.path.length) { setOutput(`No path from ${source} to ${target} by ${weight}.`); return; }
+
+      highlightPath(res.path);
+      setOutput(`Shortest Path (${weight}) ${source} → ${target}\nPath: ${res.path.join(" -> ")}\nTotal: ${res.cost}`);
+    }
+
+    function computeAllFactorsBundle() {
+      if (!state.links.length) {
+        setOutput('Build the graph first: click "Build / Refresh Graph".');
+        return;
+      }
+
+      const source = els.source.value;
+      const target = els.target.value;
+
+      const byD = shortestPath(source, target, "distance");
+      const byT = shortestPath(source, target, "time");
+      const byF = shortestPath(source, target, "fuel");
+
+      const rDistance = buildResultForSingleFactor("distance", byD.path, byD.cost);
+      const rTime = buildResultForSingleFactor("time", byT.path, byT.cost);
+      const rFuel = buildResultForSingleFactor("fuel", byF.path, byF.cost);
+
+      const weights = {
+        wD: Number(els.wDistance.value) || 0,
+        wT: Number(els.wTime.value) || 0,
+        wF: Number(els.wFuel.value) || 0,
+      };
+      if ((weights.wD + weights.wT + weights.wF) === 0) {
+        setOutput("All weights are 0. Set at least one weight > 0.");
+        return;
+      }
+      const rCombined = shortestPathMultiFactor(source, target, weights);
+
+      state.allFactorResults.combined = rCombined;
+      state.allFactorResults.distance = rDistance;
+      state.allFactorResults.time = rTime;
+      state.allFactorResults.fuel = rFuel;
+
+      els.allFactorsResultPick.value = "combined";
+      applyAllFactorsView("combined");
+
+      setOutput(
+        `All-Factors Search (${source} → ${target})\n` +
+        `Best Distance: ${byD.cost} | Path: ${byD.path.join(" -> ")}\n` +
+        `Best Time: ${byT.cost} | Path: ${byT.path.join(" -> ")}\n` +
+        `Best Fuel: ${byF.cost} | Path: ${byF.path.join(" -> ")}\n` +
+        `Best Combined Score: ${rCombined.totals?.score ?? rCombined.score} | Path: ${rCombined.path.join(" -> ")}`
+      );
+    }
+
+    function applyAllFactorsView(key) {
+      const res = state.allFactorResults[key];
+      if (!res || !res.path || !res.path.length) {
+        renderCalculationTable(null);
+        return;
+      }
+      highlightPath(res.path);
+      renderCalculationTable(res);
+    }
+
+    function toggleStatic() {
+      state.staticLayout = !state.staticLayout;
+      els.btnStatic.textContent = `Static Layout: ${state.staticLayout ? "ON" : "OFF"}`;
+
+      if (!state.simulation) return;
+
+      if (state.staticLayout) {
+        state.simulation.stop();
+        setOutput("Static Layout enabled: nodes frozen (still draggable/zoomable).");
+      } else {
+        state.simulation.alpha(0.6).restart();
+        setOutput("Static Layout disabled: simulation resumed.");
+      }
+    }
+
+    // =============================
+    // Wire controls
+    // =============================
+    els.btnAddEdge.addEventListener("click", () => {
+      const ok = addEdgeToStore(
+        els.edgeFrom.value,
+        els.edgeTo.value,
+        els.edgeDistance.value || 0,
+        els.edgeTime.value || 0,
+        els.edgeFuel.value || 0
+      );
+      if (!ok) { setOutput("Invalid edge. 'From' and 'To' are required."); return; }
+
+      els.edgeFrom.value = ""; els.edgeTo.value = "";
+      els.edgeDistance.value = ""; els.edgeTime.value = ""; els.edgeFuel.value = "";
+      setOutput(`Edge added. Total edges: ${state.edgeStore.length}. Click “Build / Refresh Graph”.`);
+    });
+
+    els.btnImportBulk.addEventListener("click", () => {
+      const { added, skipped } = importBulkEdges(els.bulkEdges.value);
+      setOutput(`Imported ${added} edges. Skipped ${skipped} lines. Total edges: ${state.edgeStore.length}.`);
+    });
+
+    els.btnClearEdges.addEventListener("click", () => {
+      state.edgeStore = [];
+      state.nodes = []; state.links = []; state.adjacency = new Map();
+      state.allFactorResults = { combined:null, distance:null, time:null, fuel:null };
+      setLoadedUI(false);
+      zoomLayer.selectAll("*").remove();
+      els.calcTableWrap.innerHTML = "";
+      setOutput("Cleared all edges. Add edges to begin.");
+    });
+
+    els.btnBuildGraph.addEventListener("click", () => {
+      const { nodes, links, adjacency } = buildGraphDataFromStore();
+      if (!links.length) {
+        setLoadedUI(false);
+        setOutput("No edges to build. Add at least one edge.");
+        return;
+      }
+      state.nodes = nodes;
+      state.links = links;
+      state.adjacency = adjacency;
+
+      state.allFactorResults = { combined:null, distance:null, time:null, fuel:null };
+      els.calcTableWrap.innerHTML = "";
+      renderGraph();
+    });
+
+    els.btnCompute.addEventListener("click", computePathSingle);
+    els.btnComputeAll.addEventListener("click", computeAllFactorsBundle);
+
+    els.allFactorsResultPick.addEventListener("change", () => applyAllFactorsView(els.allFactorsResultPick.value));
+
+    els.btnClearTable.addEventListener("click", () => {
+      els.calcTableWrap.innerHTML = "";
+      setOutput("Calculation table cleared.");
+    });
+
+    els.btnStatic.addEventListener("click", toggleStatic);
+
+    els.btnShuffle.addEventListener("click", () => {
+      if (!state.loaded || !state.simulation) return;
+
+      const wasStatic = state.staticLayout;
+      if (wasStatic) {
+        state.staticLayout = false;
+        els.btnStatic.textContent = "Static Layout: OFF";
+      }
+
+      for (const n of state.nodes) { n.fx = null; n.fy = null; }
+      state.simulation.alpha(1).restart();
+      setOutput("Layout randomized.");
+
+      if (wasStatic) {
+        setTimeout(() => {
+          state.simulation.stop();
+          state.staticLayout = true;
+          els.btnStatic.textContent = "Static Layout: ON";
+        }, 250);
+      }
+    });
+
+    els.btnReset.addEventListener("click", () => setOutput("Use Reset Highlights below to clear highlights."));
+    els.btnReset2.addEventListener("click", () => {
+      clearHighlights();
+      setOutput("Highlights cleared.");
+    });
+
+    els.btnFit.addEventListener("click", fitToScreen);
+  </script>
+</body>
+</html>
